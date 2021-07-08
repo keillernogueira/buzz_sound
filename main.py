@@ -2,6 +2,7 @@ import sys
 import datetime
 
 from dataloader import BuzzDataLoader
+from dataloader_audio import BuzzDataLoaderAudio
 from config import *
 from utils import *
 
@@ -13,6 +14,32 @@ import torch.nn as nn
 import torchvision.models as models
 from torch.autograd import Variable
 import torch.nn.functional as F
+
+
+def audio_test(test_loader, net):
+    # Setting network for evaluation mode.
+    net.eval()
+
+    with torch.no_grad():
+        # Iterating over batches.
+        for i, data in enumerate(test_loader):
+
+            # Obtaining images, labels and paths for batch.
+            inps, positions = data
+            inps = inps.squeeze()
+
+            # Casting to cuda variables.
+            inps_c = Variable(inps).cuda()
+
+            # Forwarding.
+            outs = net(inps_c)
+            # Computing probabilities.
+            soft_outs = F.softmax(outs, dim=1)
+
+            # Obtaining prior predictions.
+            prds = soft_outs.cpu().data.numpy().argmax(axis=1)
+            non_background = np.where(np.logical_or(prds == 1, prds == 2))
+            print(positions[non_background])
 
 
 def test(test_loader, net, epoch):
@@ -57,7 +84,7 @@ def test(test_loader, net, epoch):
         for k in range(len(conf_m)):
             _sum += (conf_m[k][k] / float(np.sum(conf_m[k])) if np.sum(conf_m[k]) != 0 else 0)
 
-        print("Validation/Test -- Epoch " + str(epoch) +
+        print("---- Validation/Test -- Epoch " + str(epoch) +
               " -- Time " + str(datetime.datetime.now().time()) +
               " Overall Accuracy= " + "{:.4f}".format(acc) +
               " Normalized Accuracy= " + "{:.4f}".format(_sum / float(outs.shape[1])) +
@@ -136,11 +163,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='main')
 
     # general options
+    parser.add_argument('--operation', type=str, required=True, help='Operation. Options: [Train | Test]')
     parser.add_argument('--dataset_path', type=str, required=True, help='Dataset path.')
     parser.add_argument('--output_path', type=str, required=True,
                         help='Path to save outcomes (such as images and trained models) of the algorithm.')
 
     # model options
+    parser.add_argument('--model_path', type=str, required=False, default=None,
+                        help='Path to a trained model to be used during the inference.')
     parser.add_argument('--learning_rate', type=float, default=0.01, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.005, help='Weight decay')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
@@ -149,38 +179,54 @@ if __name__ == '__main__':
     print(args)
 
     # data loaders
-    train_dataset = BuzzDataLoader('Train', args.dataset_path)
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size,
-                                                   shuffle=True, num_workers=NUM_WORKERS, drop_last=False)
+    if args.operation == 'Train':
+        train_dataset = BuzzDataLoader('Train', args.dataset_path)
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size,
+                                                       shuffle=True, num_workers=NUM_WORKERS, drop_last=False)
 
-    test_dataset = BuzzDataLoader('Test', args.dataset_path)
-    test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size,
-                                                  shuffle=False, num_workers=NUM_WORKERS, drop_last=False)
+        test_dataset = BuzzDataLoader('Validation', args.dataset_path)
+        test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size,
+                                                      shuffle=False, num_workers=NUM_WORKERS, drop_last=False)
 
-    # network
-    model = models.resnet18(pretrained=True)
-    model.fc = nn.Linear(512, train_dataset.num_classes)
-    model.cuda()
+        # network
+        model = models.resnet18(pretrained=True)
+        model.fc = nn.Linear(512, train_dataset.num_classes)
+        model.cuda()
 
-    # loss
-    criterion = nn.CrossEntropyLoss().cuda()
+        # loss
+        criterion = nn.CrossEntropyLoss().cuda()
 
-    optimizer = optim.Adam([
-        {'params': list(model.parameters())[:-1]},
-        {'params': list(model.parameters())[-1], 'lr': args.learning_rate, 'weight_decay': 1e-4}],
-        lr=args.learning_rate/10, weight_decay=args.weight_decay, betas=(0.9, 0.99)
-    )
+        optimizer = optim.Adam([
+            {'params': list(model.parameters())[:-1]},
+            {'params': list(model.parameters())[-1], 'lr': args.learning_rate, 'weight_decay': args.weight_decay}],  # 1e-4
+            lr=args.learning_rate/10, weight_decay=args.weight_decay, betas=(0.9, 0.99)
+        )
 
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.1)
 
-    curr_epoch = 1
-    best_records = []
-    for epoch in range(curr_epoch, args.epoch_num + 1):
-        train(train_dataloader, model, criterion, optimizer, epoch)
-        if epoch % VAL_INTERVAL == 0:
-            # Computing test.
-            acc, nacc, cm = test(test_dataloader, model, epoch)
+        curr_epoch = 1
+        best_records = []
+        for epoch in range(curr_epoch, args.epoch_num + 1):
+            train(train_dataloader, model, criterion, optimizer, epoch)
+            if epoch % VAL_INTERVAL == 0:
+                # Computing test.
+                acc, nacc, cm = test(test_dataloader, model, epoch)
 
-            save_best_models(model, optimizer, args.output_path, best_records, epoch, acc, nacc, cm)
+                save_best_models(model, optimizer, args.output_path, best_records, epoch, acc, nacc, cm)
 
-        scheduler.step()
+            scheduler.step()
+    elif args.operation == 'Test':
+        assert args.model_path is not None, "For inference, flag --model_path should be set."
+
+        # network
+        model = models.resnet18(pretrained=False)
+        model.fc = nn.Linear(512, 3)
+        model.load_state_dict(torch.load(args.model_path))
+        model.cuda()
+
+        dataset = BuzzDataLoaderAudio('Train', args.dataset_path)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
+                                                 shuffle=False, num_workers=NUM_WORKERS, drop_last=False)
+        audio_test(dataloader, model)
+    else:
+        raise NotImplementedError("Operation " + args.operation + " not implemented")

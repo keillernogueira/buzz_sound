@@ -1,28 +1,29 @@
 import os
+import math
 import librosa
 import numpy as np
 
-from sklearn import preprocessing
-
-import torch
 from torch.utils import data
 import torchvision.transforms as transforms
 
 
-class BuzzDataLoader(data.Dataset):
+class BuzzDataLoaderAudio(data.Dataset):
 
-    def __init__(self, mode, dataset_input_path, n_fft=1024, hop_length=256, n_mels=128):
+    # 5512.5 == 0.25 seconds
+    # 11025 == 0.5 seconds
+    def __init__(self, mode, dataset_input_path, n_fft=1024, hop_length=256, n_mels=128, window=11025):
         super().__init__()
 
-        self.mode = mode
+        self.mode = mode  # not used now
         self.dataset_input_path = dataset_input_path
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.n_mels = n_mels
+        self.window = window
 
-        self.data, self.labels = self.make_dataset(dataset_input_path)
-        self.num_classes = len(np.unique(self.labels))
-        print(self.num_classes)
+        self.data = self.make_dataset(dataset_input_path)
+        # self.num_classes = len(np.unique(self.labels))
+        # print(self.num_classes)
 
         if len(self.data) == 0:
             raise RuntimeError('Found 0 samples, please check the data set path')
@@ -30,33 +31,24 @@ class BuzzDataLoader(data.Dataset):
     def make_dataset(self, path):
         assert self.mode in ['Train', 'Validation']
 
-        if self.mode is 'Train':
-            path = os.path.join(path, 'Training_Data')
-        elif self.mode is 'Validation':
-            path = os.path.join(path, 'Validation')
+        _data = []
+        files = os.listdir(path)  # read files
+        for f in files:
+            y, sr = librosa.load(os.path.join(path, f))
+            # divide by 2 so we can have some overlapping
+            _data += [f + '-' + str(s) for s in np.arange(0.0, y.shape[0]-(self.window/2.0), (self.window/2.0))]
+            # print(librosa.get_duration(y, sr), y.shape,
+            # np.arange(0.0, librosa.get_duration(y, sr)-self.window, self.window))
 
-        _files = []
-        _labels = []
-        subfolders = os.listdir(path)
-        for subf in subfolders:
-            files = os.listdir(os.path.join(path, subf))  # read files of each subfolder
-            for f in files:
-                _files.append(os.path.join(path, subf, f))
-                _labels.append(subf)
-
-        le = preprocessing.LabelEncoder()  # 'Background_Clips': 0, 'Flight_Buzzes': 1, 'Flower_Buzzes': 2
-        _labels = le.fit_transform(_labels)
-        print(len(_files), len(_labels), dict(zip(le.classes_, le.transform(le.classes_))))
-
-        return _files, _labels
+        print(_data[0:100], len(_data))
+        return _data
 
     def __getitem__(self, index):
-        y, sr = librosa.load(self.data[index])
-        cl = self.labels[index]
-
-        print(librosa.get_duration(y, sr))
-
+        f, i = self.data[index].split('-')
+        y, sr = librosa.load(os.path.join(self.dataset_input_path, f))
         buzz_sound, _ = librosa.effects.trim(y)
+        buzz_sound = buzz_sound[int(math.ceil(float(i))):min(int(math.ceil(float(i)))+self.window, buzz_sound.shape[0])]
+        # print(f, i, y.shape, buzz_sound.shape, librosa.get_duration(y, sr), librosa.get_duration(buzz_sound, sr))
 
         mel_spectra = librosa.feature.melspectrogram(buzz_sound, sr=sr, n_fft=self.n_fft,
                                                      hop_length=self.hop_length, n_mels=self.n_mels)
@@ -78,8 +70,7 @@ class BuzzDataLoader(data.Dataset):
         mel_spectra = transform(mel_spectra)
 
         # Returning to iterator.
-        return mel_spectra.float(), cl
-        # return torch.from_numpy(mel_spectra).float(), cl
+        return mel_spectra.float(), int(float(i))
 
     def __len__(self):
         return len(self.data)

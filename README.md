@@ -42,3 +42,4 @@ python main.py --dataset_path DATASET_PATH
 1. Base paper: [Paper](https://www.biorxiv.org/content/10.1101/2020.09.07.285502v2) and 
 [Code](https://github.com/emmanueldufourq/GibbonClassifier/)
 2. [Mel Spectogram info](https://towardsdatascience.com/getting-to-know-the-mel-spectrogram-31bca3e2d9d0)
+3. https://www.mdpi.com/2076-3417/8/9/1573
