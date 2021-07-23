@@ -20,12 +20,14 @@ def audio_test(test_loader, net):
     # Setting network for evaluation mode.
     net.eval()
 
+    non_background_preds = []
+    non_background_seconds = []
     with torch.no_grad():
         # Iterating over batches.
         for i, data in enumerate(test_loader):
 
             # Obtaining images, labels and paths for batch.
-            inps, positions = data
+            inps, seconds = data
             inps = inps.squeeze()
 
             # Casting to cuda variables.
@@ -39,7 +41,10 @@ def audio_test(test_loader, net):
             # Obtaining prior predictions.
             prds = soft_outs.cpu().data.numpy().argmax(axis=1)
             non_background = np.where(np.logical_or(prds == 1, prds == 2))
-            print(positions[non_background])
+            non_background_preds.append(non_background)
+            non_background_seconds.append(seconds[non_background])
+    print(non_background_preds)
+    print(non_background_seconds)
 
 
 def test(test_loader, net, epoch):

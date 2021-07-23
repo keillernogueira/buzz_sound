@@ -54,7 +54,7 @@ class BuzzDataLoader(data.Dataset):
         y, sr = librosa.load(self.data[index])
         cl = self.labels[index]
 
-        print(librosa.get_duration(y, sr))
+        # print(librosa.get_duration(y, sr))
 
         buzz_sound, _ = librosa.effects.trim(y)
 

@@ -21,7 +21,8 @@ class BuzzDataLoaderAudio(data.Dataset):
         self.n_mels = n_mels
         self.window = window
 
-        self.data = self.make_dataset(dataset_input_path)
+        self.num_audios = 0
+        self.data, self.labels = self.make_dataset(dataset_input_path)
         # self.num_classes = len(np.unique(self.labels))
         # print(self.num_classes)
 
@@ -29,19 +30,30 @@ class BuzzDataLoaderAudio(data.Dataset):
             raise RuntimeError('Found 0 samples, please check the data set path')
 
     def make_dataset(self, path):
-        assert self.mode in ['Train', 'Validation']
+        # assert self.mode in ['Train', 'Validation']
 
         _data = []
+        _labels = []
         files = os.listdir(path)  # read files
+        print(files)
+        self.num_audios = len(files)
         for f in files:
-            y, sr = librosa.load(os.path.join(path, f))
-            # divide by 2 so we can have some overlapping
-            _data += [f + '-' + str(s) for s in np.arange(0.0, y.shape[0]-(self.window/2.0), (self.window/2.0))]
-            # print(librosa.get_duration(y, sr), y.shape,
-            # np.arange(0.0, librosa.get_duration(y, sr)-self.window, self.window))
+            if os.path.isfile(os.path.join(path, f)):
+                y, sr = librosa.load(os.path.join(path, f))
+                # divide by 2 so we can have some overlapping
+                _data += [f + '-' + str(s) for s in np.arange(0.0, y.shape[0]-(self.window/2.0), (self.window/2.0))]
+                # print(librosa.get_duration(y, sr), y.shape,
+                # np.arange(0.0, librosa.get_duration(y, sr)-self.window, self.window))
+                for lbl in np.genfromtxt(os.path.join(path, 'labels', f.replace('mp3', 'txt')), dtype=None):
+                    if lbl[0] == b'flight':
+                        lbl[0] = 1
+                    else:
+                        lbl[0] = 2
+                    _labels += [f + '-' + lbl[0] + "_" + lbl[1] + "_" + lbl[2]]
 
         print(_data[0:100], len(_data))
-        return _data
+        print(_labels, len(_labels))
+        return _data, _labels
 
     def __getitem__(self, index):
         f, i = self.data[index].split('-')
