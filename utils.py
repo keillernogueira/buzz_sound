@@ -1,11 +1,11 @@
 import os
 import argparse
-import librosa
-import librosa.display
+# import librosa
+# import librosa.display
 import numpy as np
 import matplotlib.pyplot as plt
 
-import torch
+# import torch
 
 
 def str2bool(v):
@@ -88,3 +88,105 @@ def plot_sound(dataset):
     plt.tight_layout()
     # plt.savefig("C:\\Users\\keill\\Desktop\\plot.png")
     plt.show()
+
+
+def union_segments(non_background_preds, non_background_files, non_background_seconds):
+    cur_pred = non_background_preds[0]
+    cur_f = non_background_files[0]
+    cur_s = non_background_seconds[0]
+
+    union_non_background_pred = []
+    union_non_background_files = []
+    union_non_background_seconds = []
+
+    for i in range(1, len(non_background_seconds)):
+        if cur_pred == non_background_preds[i] and cur_f == non_background_files[i]:
+            if cur_s[1] >= non_background_seconds[i][0]:
+                cur_s[1] = non_background_seconds[i][1]
+            else:
+                union_non_background_pred.append(cur_pred)
+                union_non_background_files.append(cur_f)
+                union_non_background_seconds.append(cur_s)
+                cur_s = non_background_seconds[i]
+        else:
+            union_non_background_pred.append(cur_pred)
+            union_non_background_files.append(cur_f)
+            union_non_background_seconds.append(cur_s)
+            cur_pred = non_background_preds[i]
+            cur_f = non_background_files[i]
+            cur_s = non_background_seconds[i]
+
+    # last step
+    union_non_background_pred.append(cur_pred)
+    union_non_background_files.append(cur_f)
+    union_non_background_seconds.append(cur_s)
+
+    return np.asarray(union_non_background_pred), np.asarray(union_non_background_files), \
+           np.asarray(union_non_background_seconds)
+
+
+def save_audio_file(preds, files, seconds, save_file):
+    print(preds.shape, files.shape, seconds[:, 0].shape, seconds[:, 1].shape)
+    array = sorted(list(zip(files, preds, seconds[:, 0], seconds[:, 1])), key=lambda x: x[0])
+
+    formatted = []
+    for i in range(len(array)):
+        if array[i][1] == 1:
+            p = 'flight'
+        else:
+            p = 'flower'
+        formatted.append([array[i][0], p, "{:.3f}".format(array[i][2]), "{:.3f}".format(array[i][3])])
+    # print(np.asarray(formatted))
+    np.savetxt(save_file, np.asarray(formatted), fmt='%s   %s  %s   %s', delimiter='\t', newline='\n',
+               header='Observation  Type    Start	Stop')
+
+
+def overlap(min1, max1, min2, max2):
+    return max(0.0, min(max1, max2) - max(min1, min2))
+
+
+def long_records_metric(annotations, predictions):
+    correct = 0
+    incorrect = 0
+    not_found = 0
+
+    for i in range(len(annotations)):
+        obs, cl, start, stop = annotations[i][0], annotations[i][1], annotations[i][2], annotations[i][3]
+        has_overlap = False
+        for j in range(len(predictions)):
+            p_obs, p_cl, p_start, p_stop = predictions[j][0], predictions[j][1], predictions[j][2], predictions[j][3]
+            if obs == p_obs:
+                if overlap(start, stop, p_start, p_stop) > 0.0:
+                    has_overlap = True
+                    if cl == p_cl:
+                        correct += 1
+                    else:
+                        incorrect += 1
+                    break
+        if has_overlap is False:
+            not_found += 1
+    print(correct, incorrect, not_found)
+
+
+def read_annotations(path):
+    _data = []
+    for lbl in np.genfromtxt(path, dtype=None, skip_header=1):
+        if lbl[1] == b'flight':
+            lbl[1] = 1
+        else:
+            lbl[1] = 2
+        _data.append([lbl[0], int(lbl[1]), lbl[2], lbl[3]])
+    # print(_data)
+    return np.asarray(_data)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='main')
+    parser.add_argument('--annotation', type=str, required=True, help='Path to the annotations')
+    parser.add_argument('--prediction', type=str, required=True, help='Path to predictions')
+    args = parser.parse_args()
+    print(args)
+
+    _labels = read_annotations(args.annotation)
+    _preds = read_annotations(args.prediction)
+    long_records_metric(_labels, _preds)

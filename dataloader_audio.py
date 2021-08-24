@@ -41,29 +41,41 @@ class BuzzDataLoaderAudio(data.Dataset):
             if os.path.isfile(os.path.join(path, f)):
                 y, sr = librosa.load(os.path.join(path, f))
                 # divide by 2 so we can have some overlapping
+                print(f, y.shape)
                 _data += [f + '-' + str(s) for s in np.arange(0.0, y.shape[0]-(self.window/2.0), (self.window/2.0))]
                 # print(librosa.get_duration(y, sr), y.shape,
                 # np.arange(0.0, librosa.get_duration(y, sr)-self.window, self.window))
-                for lbl in np.genfromtxt(os.path.join(path, 'labels', f.replace('mp3', 'txt')), dtype=None):
-                    if lbl[0] == b'flight':
-                        lbl[0] = 1
-                    else:
-                        lbl[0] = 2
-                    _labels += [f + '-' + lbl[0] + "_" + lbl[1] + "_" + lbl[2]]
 
-        print(_data[0:100], len(_data))
+        for lbl in np.genfromtxt(os.path.join(path, 'labels/Annotations.txt'), dtype=None, skip_header=1):
+            if lbl[1] == b'flight':
+                lbl[1] = 1
+            else:
+                lbl[1] = 2
+            _labels += [str(lbl[0]) + "_" + str(lbl[1]) + "_" + str(lbl[2]) + "_" + str(lbl[3])]
+
+        print(_data, len(_data))
         print(_labels, len(_labels))
         return _data, _labels
 
     def __getitem__(self, index):
         f, i = self.data[index].split('-')
         y, sr = librosa.load(os.path.join(self.dataset_input_path, f))
-        buzz_sound, _ = librosa.effects.trim(y)
-        buzz_sound = buzz_sound[int(math.ceil(float(i))):min(int(math.ceil(float(i)))+self.window, buzz_sound.shape[0])]
+        entire_buzz_sound, _ = librosa.effects.trim(y)
+        buzz_long = entire_buzz_sound.shape[0]
+
+        # crop buzz
+        buzz_sound = entire_buzz_sound[int(math.ceil(float(i))):min(int(math.ceil(float(i)))+self.window, buzz_long)]
+        if buzz_sound.shape[0] != self.window:
+            assert min(int(math.ceil(float(i)))+self.window, buzz_long) == buzz_long
+            # print('---', buzz_long, int(math.ceil(float(i))), self.window)
+            diff = self.window - (buzz_long - int(math.ceil(float(i))))
+            buzz_sound = entire_buzz_sound[int(math.ceil(float(i)))-diff:buzz_long]
+            # print('after', buzz_sound.shape, int(math.ceil(float(i))), diff)
         # print(f, i, y.shape, buzz_sound.shape, librosa.get_duration(y, sr), librosa.get_duration(buzz_sound, sr))
 
         mel_spectra = librosa.feature.melspectrogram(buzz_sound, sr=sr, n_fft=self.n_fft,
                                                      hop_length=self.hop_length, n_mels=self.n_mels)
+
         # mel_spectra = np.expand_dims(mel_spectra, axis=0)
         if len(mel_spectra.shape) == 2:
             mel_spectra = np.stack([mel_spectra] * 3, 2)  # .transpose(2, 0, 1)
@@ -74,6 +86,8 @@ class BuzzDataLoaderAudio(data.Dataset):
         # print('mel_spectra.shape', mel_spectra.shape)
         # mel_spectra_DB = librosa.power_to_db(mel_spectra, ref=np.max)
 
+        # https://github.com/iver56/audiomentations
+
         transform = transforms.Compose([
             # transforms.Resize(256),
             transforms.ToTensor(),
@@ -82,7 +96,7 @@ class BuzzDataLoaderAudio(data.Dataset):
         mel_spectra = transform(mel_spectra)
 
         # Returning to iterator.
-        return mel_spectra.float(), int(float(i))
+        return mel_spectra.float(), int(f[:-4].split('_')[-1]), librosa.samples_to_time(int(math.ceil(float(i))), sr)
 
     def __len__(self):
         return len(self.data)

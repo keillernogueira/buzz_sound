@@ -1,6 +1,8 @@
 import sys
 import datetime
 
+import numpy as np
+
 from dataloader import BuzzDataLoader
 from dataloader_audio import BuzzDataLoaderAudio
 from config import *
@@ -20,14 +22,13 @@ def audio_test(test_loader, net):
     # Setting network for evaluation mode.
     net.eval()
 
-    non_background_preds = []
-    non_background_seconds = []
+    first = True
     with torch.no_grad():
         # Iterating over batches.
         for i, data in enumerate(test_loader):
 
-            # Obtaining images, labels and paths for batch.
-            inps, seconds = data
+            # Obtaining input, files, and seconds for batch.
+            inps, files, seconds = data
             inps = inps.squeeze()
 
             # Casting to cuda variables.
@@ -41,10 +42,24 @@ def audio_test(test_loader, net):
             # Obtaining prior predictions.
             prds = soft_outs.cpu().data.numpy().argmax(axis=1)
             non_background = np.where(np.logical_or(prds == 1, prds == 2))
-            non_background_preds.append(non_background)
-            non_background_seconds.append(seconds[non_background])
-    print(non_background_preds)
-    print(non_background_seconds)
+
+            if len(non_background[0]) != 0:
+                if first:
+                    non_background_preds = prds[non_background]
+                    non_background_files = files[non_background]
+                    non_background_seconds = np.asarray([(s, s+0.5) for s in seconds[non_background]])
+                    first = False
+                else:
+                    sec = np.asarray([(s, s+0.5) for s in seconds[non_background]])
+                    non_background_preds = np.concatenate((non_background_preds, prds[non_background]))
+                    non_background_files = np.concatenate((non_background_files, files[non_background]))
+                    non_background_seconds = np.concatenate((non_background_seconds, sec))
+
+    # print(non_background_preds)
+    # print(non_background_files)
+    # print(non_background_seconds)
+
+    return union_segments(non_background_preds, non_background_files, non_background_seconds)
 
 
 def test(test_loader, net, epoch):
@@ -168,7 +183,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='main')
 
     # general options
-    parser.add_argument('--operation', type=str, required=True, help='Operation. Options: [Train | Test]')
+    parser.add_argument('--operation', type=str, required=True, help='Operation. Options: [Train | Test | Test_Full]')
     parser.add_argument('--dataset_path', type=str, required=True, help='Dataset path.')
     parser.add_argument('--output_path', type=str, required=True,
                         help='Path to save outcomes (such as images and trained models) of the algorithm.')
@@ -229,9 +244,25 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(args.model_path))
         model.cuda()
 
+        test_dataset = BuzzDataLoader('Validation', args.dataset_path)
+        test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size,
+                                                      shuffle=False, num_workers=NUM_WORKERS, drop_last=False)
+
+        epoch = int(os.path.basename(args.model_path)[:-4].split('_')[-1])
+        test(test_dataloader, model, epoch)
+    elif args.operation == 'Test_Full':
+        assert args.model_path is not None, "For inference, flag --model_path should be set."
+
+        # network
+        model = models.resnet18(pretrained=False)
+        model.fc = nn.Linear(512, 3)
+        model.load_state_dict(torch.load(args.model_path))
+        model.cuda()
+
         dataset = BuzzDataLoaderAudio('Train', args.dataset_path)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
                                                  shuffle=False, num_workers=NUM_WORKERS, drop_last=False)
-        audio_test(dataloader, model)
+        preds, files, seconds = audio_test(dataloader, model)
+        save_audio_file(preds, files, seconds, os.path.join(args.output_path, 'prediction.txt'))
     else:
         raise NotImplementedError("Operation " + args.operation + " not implemented")
